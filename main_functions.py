@@ -1,5 +1,7 @@
+import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.cluster import SpectralClustering
+import ClusterEnsembles as CE
 from sklearn.metrics import normalized_mutual_info_score
 from sklearn.metrics import adjusted_rand_score
 from sklearn.metrics import jaccard_score
@@ -51,6 +53,28 @@ def create_spectral_clustering_models(k_list, itr_num, data):
 
 
 '''
+Function to create ensemble clustering labels for clustering data
+k_list: List of values for the number of clusters
+itr_num: Number of models to create for each value of k
+ensemble_input: Data to be clustered into k clusters using ensemble clustering
+algo_name: name of the algorithm to use for ensemble clustering (must be one of cspa, mcla, hbgf, nmf)
+Returns a list of ensemble clustering labels with the specified number of clusters and algorithm
+'''
+
+
+def create_ensemble_clustering(k_list, itr_num, ensemble_input, algo_name):
+    ensemble_methods = ('cspa', 'mcla', 'hbgf', 'nmf')
+    assert algo_name.lower() in ensemble_methods, 'The given algorithm name is not in [cspa, mcla, hbgf, nmf], ' \
+                                                  'please use one of these algorithms'
+    ensemble_labels = []
+    for k in k_list:
+        for i in range(itr_num):
+            label = CE.cluster_ensembles(ensemble_input, nclass=k, solver=algo_name)
+            ensemble_labels.append(label)
+    return ensemble_labels
+
+
+'''
 Function to add a Species column to a dataframe based on a target column
 df: Dataframe to add the Species column to
 target_column: Column used to determine the values in the Species column
@@ -96,12 +120,93 @@ def calculate_internal_validation(actual_data, predicted_labels):
     return [round(db_score, 3), round(sh_score, 3), round(ch_score, 3)]
 
 
+'''
+Function to calculate the mean of the validation scores
+validation_results: List of results obtained from calculating internal or external validation
+Returns a list of the mean values for each validation score
+'''
+
+
 def calculate_mean_of_validation(validation_results):
-    first, second, third, length = 0, 0, 0, 0
+    first_score, second_score, third_score, length = 0, 0, 0, 0
     for [x, y, z] in validation_results:
-        first += x
-        second += y
-        third += z
+        first_score += x  # x is either davies_bouldin_score or  normalized_mutual_info_score
+        second_score += y  # y is either silhouette_score or adjusted_rand_score
+        third_score += z  # z is either calinski_harabasz_score or jaccard_score
+        length += 1  # length is the size of validation_results
+    return [round(first_score / length, 3), round(second_score / length, 3), round(third_score / length, 3)]
+
+
+'''
+Function to extract the predicted labels from a list of models
+models: List of clustering models
+Returns a list of predicted labels, one for each model in the input list
+'''
+
+
+def get_labels_from_models(models):
+    return [model.labels_ for model in models]
+
+
+'''
+Function to convert list of clustering models into valid input for ensemble clustering
+models: List of clustering models
+Returns an array of predicted labels from the clustering models, suitable for input into ensemble clustering methods.
+'''
+
+
+def modify_models_to_valid_ensemble_input(models):
+    return np.array(get_labels_from_models(models))
+
+
+'''
+Function to calculate internal validation metrics for multiple labels
+actual_data: Original data to compare against predicted clusters
+predicted_labels: List of predicted labels generated from different models
+Returns a list of internal validation metrics for each model in the form of [db_score, sh_score, ch_score]
+'''
+
+
+def calculate_internal_validation_for_all_labels(actual_data, predicted_labels):
+    validation_results = []
+    for label in predicted_labels:
+        validation_results.append(calculate_internal_validation(actual_data, label))
+    return validation_results
+
+
+'''
+Function to calculate external validation scores for a list of predicted labels
+true_labels: Ground truth labels for the data
+predicted_labels: List of predicted labels obtained from different models
+Returns a list of lists, each inner list contains the external validation scores for one set of predicted labels
+'''
+
+
+def calculate_external_validation_for_all_labels(true_labels, predicted_labels):
+    validation_results = []
+    for label in predicted_labels:
+        validation_results.append(calculate_external_validation(true_labels, label))
+    return validation_results
+
+
+'''
+Calculates the variance of the validation scores in the validation_results list.    
+Parameters:
+validation_results (List): List of results obtained from calculating internal or external validation   
+mean (List): List of mean values for the given validation_results 
+Returns:
+List: A list of the variance values for each validation score
+'''
+
+
+def calculate_variance_of_validation(validation_results, mean):
+    first_sum_square, second_sum_square, third_sum_square, length = 0, 0, 0, 0
+    for [x, y, z] in validation_results:
+        first_sum_square += (x - mean[0]) ** 2
+        second_sum_square += (y - mean[1]) ** 2
+        third_sum_square += (z - mean[2]) ** 2
         length += 1
-    return [round(first/length, 3), round(second/length, 3), round(third/length, 3)]
+    return [round(first_sum_square / length, 3), round(second_sum_square / length, 3),
+            round(third_sum_square / length, 3)]
+
 # %%
