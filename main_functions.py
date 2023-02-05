@@ -1,4 +1,5 @@
 import numpy as np
+from prettytable import PrettyTable
 from sklearn.cluster import KMeans
 from sklearn.cluster import SpectralClustering
 import ClusterEnsembles as CE
@@ -9,6 +10,12 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import davies_bouldin_score
 from sklearn.metrics import silhouette_score
 from sklearn.metrics import calinski_harabasz_score
+
+# The following vars are for displaying the end results for each algorithm. See display_results in main_function
+
+list_of_algos, internal_mean_list, external_mean_list, internal_variance_list, external_variance_list = \
+    [], [], [], [], []
+
 
 '''
 # Function to create KMeans models for clustering data
@@ -208,5 +215,77 @@ def calculate_variance_of_validation(validation_results, mean):
         length += 1
     return [round(first_sum_square / length, 3), round(second_sum_square / length, 3),
             round(third_sum_square / length, 3)]
+
+
+"""
+This function use the following - list of algorithm names, list of k values, number of iterations, 
+lists of mean values for internal and external validation, and lists of variance values for internal 
+and external validation.
+The function returns a table with the input values organized in a readable format, displaying the algorithm names, 
+k values, iteration number, and mean and variance values for both internal and external validation.
+"""
+
+
+def display_results(k_list, itr_num):
+    x = PrettyTable()
+    x.field_names = ["", *list_of_algos]
+    x.add_row(["k_list", *k_list * len(list_of_algos)])
+    x.add_row(["itr_num", *[itr_num] * len(list_of_algos)])
+    internal_mean_fields = ["Internal_Mean_DB_Score", "Internal_Mean_Sil_Score", "Internal_Mean_CH_Score"]
+    for i in range(3):
+        row = [internal_mean_fields[i]]
+        for j in range(len(list_of_algos)):
+            row.append(internal_mean_list[j][i])
+        x.add_row(row)
+    external_mean_fields = ["External_Mean_NMI_Score", "External_Mean_ARI_Score", "External_Mean_J_Score"]
+    for i in range(3):
+        row = [external_mean_fields[i]]
+        for j in range(len(list_of_algos)):
+            row.append(external_mean_list[j][i])
+        x.add_row(row)
+    internal_variance_fields = ["Internal_Variance_DB_Score", "Internal_Variance_Sil_Score",
+                                "Internal_Variance_CH_Score"]
+    for i in range(3):
+        row = [internal_variance_fields[i]]
+        for j in range(len(list_of_algos)):
+            row.append(internal_variance_list[j][i])
+        x.add_row(row)
+    external_variance_fields = ["External_Variance_NMI_Score", "External_Variance_ARI_Score",
+                                "External_Variance_J_Score"]
+    for i in range(3):
+        row = [external_variance_fields[i]]
+        for j in range(len(list_of_algos)):
+            row.append(external_variance_list[j][i])
+        x.add_row(row)
+    print(x)
+
+
+"""
+Adds the results of a single algorithm to the lists of results.
+    
+Args:
+    - algo_name (str): name of the algorithm
+    - internal_mean (list): list of internal mean scores for each evaluation metric
+    - external_mean (list): list of external mean scores for each evaluation metric
+    - internal_variance (list): list of internal variance scores for each evaluation metric
+    - external_variance (list): list of external variance scores for each evaluation metric
+    
+Returns:
+    None (updates the global lists)
+"""
+
+
+def add_results(algo_name, internal_mean, external_mean, internal_variance, external_variance):
+    list_of_algos.append(algo_name)
+    internal_mean_list.append(internal_mean)
+    external_mean_list.append(external_mean)
+    internal_variance_list.append(internal_variance)
+    external_variance_list.append(external_variance)
+
+
+def clear_results():
+    global list_of_algos, internal_mean_list, external_mean_list, internal_variance_list, external_variance_list
+    list_of_algos, internal_mean_list, external_mean_list, internal_variance_list, external_variance_list = \
+        [], [], [], [], []
 
 # %%
