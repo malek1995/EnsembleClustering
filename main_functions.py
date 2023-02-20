@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from prettytable import PrettyTable
 from sklearn.cluster import KMeans
 from sklearn.cluster import SpectralClustering
 import ClusterEnsembles as CE
@@ -14,6 +13,7 @@ from sklearn.metrics import calinski_harabasz_score
 import struct
 from sklearn.cluster import DBSCAN
 import time
+import multiprocessing as mp
 
 # The following vars are for displaying the end results for each algorithm. See display_results in main_function
 
@@ -23,7 +23,7 @@ list_of_algos, internal_mean_list, external_mean_list, internal_variance_list, e
 
 df = pd.DataFrame()
 
-time_dic = {}
+time_dic = mp.Manager().dict()
 
 '''
 # Function to create KMeans models for clustering data
@@ -248,7 +248,6 @@ def perform_ensemble_clustering(base_clustering, k_list, itr_num, data, target):
         ensemble_labels = create_ensemble_clustering(k_list, itr_num, base_clustering, method, data)
         add_validation_results(data, target, ensemble_labels, method)
 
-
 '''
 Function to create ensemble clustering labels for clustering data
 k_list: List of values for the number of clusters
@@ -350,10 +349,67 @@ def display_results(df):
     
     
     
+'''
+Function to perform ensemble clustering with different algorithms and parameters
+base_clustering: base clustering algorithm to use (kmeans or spectral)
+k_list: list of values for number of clusters
+itr_num: number of models to create for each value of k
+data: input data to be clustered
+target: target labels (if available) for validation
+
+
+
+def perform_ensemble_clustering(base_clustering, k_list, itr_num, data, target):
+    ensemble_methods = ['nmf', 'cspa', 'mcla', 'hbgf']
+    for method in ensemble_methods:
+        ensemble_labels = create_ensemble_clustering(k_list, itr_num, base_clustering, method, data)
+        add_validation_results(data, target, ensemble_labels, method)
+'''
+
+'''
+Function to create ensemble clustering labels for clustering data
+k_list: List of values for the number of clusters
+itr_num: Number of models to create for each value of k
+ensemble_input: Data to be clustered into k clusters using ensemble clustering
+algo_name: name of the algorithm to use for ensemble clustering (must be one of cspa, mcla, hbgf, nmf)
+Returns a list of ensemble clustering labels with the specified number of clusters and algorithm
+
+
+
+def create_ensemble_clustering(k_list, itr_num, base_clustering, algo_name, data):
+    global time_dic
+    ensemble_methods = ('cspa', 'mcla', 'hbgf', 'nmf')
+    assert algo_name.lower() in ensemble_methods, 'The given algorithm name is not in [cspa, mcla, hbgf, nmf], ' \
+                                                  'please use one of these algorithms'
+    ensemble_labels = []
+    inputs = [([k], itr_num, base_clustering, algo_name, data) for k in k_list for i in range(itr_num)]
+    with mp.Pool() as pool:
+        results = pool.map(worker, inputs)
+        for result in results:
+            label, time_taken = result
+            if algo_name in time_dic:
+                time_dic[algo_name].append(time_taken)
+            else:
+                time_dic[algo_name] = [time_taken]
+            ensemble_labels.append(label)
+    return ensemble_labels  
     
+
     
-    
-    
+def worker(input):
+    k_list, itr_num, base_clustering, algo_name, data = input
+    if base_clustering.lower() == 'kmeans':
+        k_means_models = create_kmeans_models(k_list, itr_num, data)
+        ensemble_input = modify_models_to_valid_ensemble_input(k_means_models)
+    else:
+        spectral_models = create_spectral_clustering_models(k_list, itr_num, data)
+        ensemble_input = modify_models_to_valid_ensemble_input(spectral_models)
+    start_time = time.time()
+    label = CE.cluster_ensembles(ensemble_input, nclass=k_list[0], solver=algo_name)
+    end_time = time.time()
+    time_taken = end_time - start_time
+    return label, time_taken
+ '''   
     
 def read_idx(filename):
     with open(filename, 'rb') as f:
