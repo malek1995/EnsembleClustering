@@ -12,7 +12,10 @@ from sklearn.metrics import calinski_harabasz_score
 import struct
 import time
 import multiprocessing as mp
-from sklearn.datasets import load_iris
+from concurrent.futures import ProcessPoolExecutor
+
+
+from main_functions import create_spectral_clustering_models
 
 # The following vars are for displaying the end results for each algorithm. See display_results in main_function
 
@@ -22,97 +25,79 @@ list_of_algos, internal_mean_list, external_mean_list, internal_variance_list, e
 
 df = pd.DataFrame()
 
-time_dic = mp.Manager().dict()
+time_dic = {}
 
 
 def perform_ensemble_clustering(base_clustering, k_list, itr_num, data, target):
     ensemble_methods = ['nmf', 'cspa', 'mcla', 'hbgf']
     for method in ensemble_methods:
-        print(f'Start run perform_ensemble_clustering on {method}')
         ensemble_labels = create_ensemble_clustering(k_list, itr_num, base_clustering, method, data)
-        print(f'Done run perform_ensemble_clustering on {method}')
         add_validation_results(data, target, ensemble_labels, method)
-        
-
 
 
 def create_ensemble_clustering(k_list, itr_num, base_clustering, algo_name, data):
-    
-    ensemble_methods = ('cspa', 'mcla', 'hbgf', 'nmf')
-    assert algo_name.lower() in ensemble_methods, 'The given algorithm name is not in [cspa, mcla, hbgf, nmf], ' \
-                                                  'please use one of these algorithms'
-    ensemble_labels = []
-    queue = mp.Queue()
-    for k in k_list:
-        procs = []
-        for i in range(itr_num):
-            proc = mp.Process(target= run_ensemble, args=(queue, k_list, itr_num, k, base_clustering, algo_name, data)) 
-            procs.append(proc)
-            print("start porc", i)
-            proc.start()    
-        
-        for i in range(itr_num):
-            ensemble_labels.append(queue.get())
-        
-        for i in procs:
-            i.join()
-    return ensemble_labels
-    
- 
-
-
-    
-
-def run_ensemble(queue, k_list, itr_num, k, base_clustering, algo_name, data):
     global time_dic
+    ensemble_labels = []
+    futures = []
+    with ProcessPoolExecutor(max_workers=6) as executor:
+        for k in k_list:
+            for i in range(itr_num):
+                # Submit each iteration as a separate task to the executor
+                future = executor.submit(run_ensemble, base_clustering, k, algo_name, k_list, itr_num, data)
+                futures.append(future)
+
+    # Retrieve the results from the futures
+    for future in futures:
+        time_taken, label = future.result()
+
+        if algo_name in time_dic:
+            time_dic[algo_name].append(time_taken)
+        else:
+            time_dic[algo_name] = [time_taken]
+        ensemble_labels.append(label)
+
+    return ensemble_labels
+
+
+def run_ensemble(base_clustering, k, algo_name, k_list, itr_num, data):
+
     if base_clustering.lower() == 'kmeans':
         k_means_models = create_kmeans_models(k_list, itr_num, data)
         ensemble_input = modify_models_to_valid_ensemble_input(k_means_models)
     else:
         spectral_models = create_spectral_clustering_models(k_list, itr_num, data)
         ensemble_input = modify_models_to_valid_ensemble_input(spectral_models)
-    
-                              
-    print(algo_name, "is running")
+
     start_time = time.time()
     label = CE.cluster_ensembles(ensemble_input, nclass=k, solver=algo_name)
-    print(algo_name, "is done")
     end_time = time.time()
     time_taken = end_time - start_time
-    if algo_name in time_dic:
-        time_dic[algo_name].append(time_taken)
-    else:
-        time_dic[algo_name] = [time_taken] 
-    queue.put(label)
-    
-    
-    
+    return time_taken, label
+
+
 def create_kmeans_models(k_list, itr_num, data):
     kmeans_models = []
     for k in k_list:
         for i in range(itr_num):
-            model = KMeans(n_clusters=k, init='random', n_init = 1)
+            model = KMeans(n_clusters=k, init='random', n_init=1)
             model.fit(data)
             kmeans_models.append(model)
     return kmeans_models
 
 
+def create_kmeans_models_parallel(k_list, itr_num, data):
+    kmeans_models = []
+    futures = []
+    with ProcessPoolExecutor(max_workers=6) as executor:
+        for k in k_list:
+            for i in range(itr_num):
+                future = executor.submit(KMeans, n_clusters=k, init='random', n_init=1).result()
+                model = future.fit(data)
+                kmeans_models.append(model)
+                futures.append(future)
+    return kmeans_models
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-        
 def get_df():
     global df
     return df
@@ -123,40 +108,37 @@ def get_time_dic():
     return time_dic
 
 
-
-def display_results(df):
+def display_results(dataframe):
     validation_techniques = ['DB_Score', 'SH_Score', 'CH_Score', 'NMF_Score', 'AR_Score', 'J_Score']
-    algo_names = list(df['Algorithm'])
+    algo_names = list(dataframe['Algorithm'])
     all_values = []
     for i in range(len(algo_names)):
         values_of_alog = []
         for j in validation_techniques:
-            score = df.at[i, j]
+            score = dataframe.at[i, j]
             min_ = np.min(score)
             max_ = np.max(score)
             mean = np.mean(score)
             var = np.var(score)
             values_of_alog.extend([min_, max_, mean, var])
         all_values.append(values_of_alog)
-        values_of_algo = []
-    df = pd.DataFrame(all_values,
-                          index=pd.Index(algo_names, name='Algorithm name'),
-                          columns=pd.MultiIndex.from_product([validation_techniques,['Min', 'Max', 'Mean', 'Var']], names=['Validation technique:', '']))
-    df = df.round(3)
-    return df.style
-
-
+    dataframe = pd.DataFrame(all_values,
+                             index=pd.Index(algo_names, name='Algorithm name'),
+                             columns=pd.MultiIndex.from_product([validation_techniques, ['Min', 'Max', 'Mean', 'Var']],
+                                                         names=['Validation technique:', '']))
+    dataframe = dataframe.round(3)
+    return dataframe.style
 
 
 def add_validation_results(data, target, labels, algo_name):
     global df
-    
+
     internal = calculate_internal_validation_for_all_labels(data, labels, algo_name)
     external = calculate_external_validation_for_all_labels(target, labels)
 
     internal_scores = list(zip(*internal))
     external_scores = list(zip(*external))
-    
+
     db_score = list(internal_scores[0])
     sh_score = list(internal_scores[1])
     ch_score = list(internal_scores[2])
@@ -164,9 +146,8 @@ def add_validation_results(data, target, labels, algo_name):
     ar_score = list(external_scores[1])
     j_score = list(external_scores[2])
 
-
     df = df.append({'Algorithm': algo_name, 'DB_Score': db_score, 'SH_Score': sh_score, 'CH_Score': ch_score,
-                   'NMF_Score': nmf_score, 'AR_Score': ar_score, 'J_Score': j_score}, ignore_index=True)
+                    'NMF_Score': nmf_score, 'AR_Score': ar_score, 'J_Score': j_score}, ignore_index=True)
 
 
 def calculate_internal_validation_for_all_labels(actual_data, predicted_labels, algo_name):
@@ -174,7 +155,6 @@ def calculate_internal_validation_for_all_labels(actual_data, predicted_labels, 
     for label in predicted_labels:
         validation_results.append(calculate_internal_validation(actual_data, label, algo_name))
     return validation_results
-
 
 
 def calculate_external_validation_for_all_labels(true_labels, predicted_labels):
@@ -191,13 +171,8 @@ def calculate_external_validation(true_labels, predicted_labels):
     return [nmf_score, ar_score, j_score]
 
 
-
-
 def calculate_internal_validation(actual_data, predicted_labels, algo_name):
-    if algo_name.lower() == 'dbscan':
-        reduced_data = actual_data
-    else:
-        reduced_data = PCA(n_components=2).fit_transform(actual_data)
+    reduced_data = PCA(n_components=2).fit_transform(actual_data)
     db_score = davies_bouldin_score(reduced_data, predicted_labels)
     sh_score = silhouette_score(reduced_data, predicted_labels)
     ch_score = calinski_harabasz_score(reduced_data, predicted_labels)
@@ -211,17 +186,10 @@ def get_labels_from_models(models):
 def modify_models_to_valid_ensemble_input(models):
     return np.array(get_labels_from_models(models))
 
+
 def clear_results():
     global time_dic, df, list_of_algos, internal_mean_list, external_mean_list, internal_variance_list, external_variance_list
     list_of_algos, internal_mean_list, external_mean_list, internal_variance_list, external_variance_list = \
         [], [], [], [], []
     df = pd.DataFrame()
     time_dic = {}
-
-
-
-
-
-
-
-
