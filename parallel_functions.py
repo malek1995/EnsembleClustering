@@ -12,7 +12,7 @@ from sklearn.metrics import silhouette_score
 from sklearn.metrics import calinski_harabasz_score
 import time
 from concurrent.futures import ProcessPoolExecutor
-import struct
+
 
 def modify_models_to_valid_ensemble_input(models):
     return np.array(get_labels_from_models(models))
@@ -35,7 +35,7 @@ def run_ensemble(base_clustering, k, algo_name, k_list, itr_num, data):
     else:
         spectral_models = create_spectral_clustering_models(k_list, itr_num, data)
         ensemble_input = modify_models_to_valid_ensemble_input(spectral_models)
-        print(f'Done with spectral_models for ensemble_input of {algo_name}') 
+
     start_time = time.time()
     label = CE.cluster_ensembles(ensemble_input, nclass=k, solver=algo_name)
     end_time = time.time()
@@ -45,7 +45,7 @@ def run_ensemble(base_clustering, k, algo_name, k_list, itr_num, data):
 
 def create_kmeans_models_parallel(k_list, itr_num, data):
     kmeans_models = []
-    with ProcessPoolExecutor(max_workers=itr_num) as executor:
+    with ProcessPoolExecutor(max_workers=6) as executor:
         for k in k_list:
             for i in range(itr_num):
                 future = executor.submit(KMeans, n_clusters=k, init='random', n_init=1).result()
@@ -58,7 +58,7 @@ def create_spectral_clustering_models(k_list, itr_num, data):
     spectral_clustering_models = []
     for k in k_list:
         for i in range(itr_num):
-            model = SpectralClustering(n_clusters=k)
+            model = SpectralClustering(n_clusters=k, assign_labels='discretize')
             model.fit(data)
             spectral_clustering_models.append(model)
     return spectral_clustering_models
@@ -66,10 +66,10 @@ def create_spectral_clustering_models(k_list, itr_num, data):
 
 def create_spectral_models_parallel(k_list, itr_num, data):
     spectral_models = []
-    with ProcessPoolExecutor(max_workers=itr_num) as executor:
+    with ProcessPoolExecutor(max_workers=6) as executor:
         for k in k_list:
             for i in range(itr_num):
-                future = executor.submit(SpectralClustering, n_clusters=k).result()
+                future = executor.submit(SpectralClustering, n_clusters=k, assign_labels='discretize').result()
                 model = future.fit(data)
                 spectral_models.append(model)
     return spectral_models
@@ -108,19 +108,13 @@ def get_labels_from_models(models):
     return [model.labels_ for model in models]
 
 
-def read_idx(filename):
-    with open(filename, 'rb') as f:
-        zero, data_type, dims = struct.unpack('>HBB', f.read(4))
-        shape = tuple(struct.unpack('>I', f.read(4))[0] for d in range(dims))
-        return np.frombuffer(f.read(), dtype=np.uint8).reshape(shape)
-
 class CompareClustering:
     def __init__(self):
         self.df = pd.DataFrame()
         self.time_dic = {}
 
     def perform_ensemble_clustering(self, base_clustering, k_list, itr_num, data, target):
-        ensemble_methods = ['nmf', 'cspa', 'mcla', 'hbgf']
+        ensemble_methods = ['nmf', 'mcla', 'hbgf', 'cspa']
         for method in ensemble_methods:
             print(f'{method.upper()} is running')
             ensemble_labels = self.create_ensemble_clustering(k_list, itr_num, base_clustering, method, data)
@@ -129,12 +123,11 @@ class CompareClustering:
     def create_ensemble_clustering(self, k_list, itr_num, base_clustering, algo_name, data):
         ensemble_labels = []
         futures = []
-        with ProcessPoolExecutor(max_workers=itr_num) as executor:
+        with ProcessPoolExecutor(max_workers=6) as executor:
             for k in k_list:
                 for i in range(itr_num):
                     future = executor.submit(run_ensemble, base_clustering, k, algo_name, k_list, itr_num, data)
                     futures.append(future)
-                    
 
         for future in futures:
             time_taken, label = future.result()
@@ -187,7 +180,7 @@ class CompareClustering:
                                    names=['Validation technique:', '']))
         self.df = self.df.round(5)
         return self.df.style
-    
+
     def display_time(self):
         for key, value in self.time_dic.items():
             self.time_dic[key] = np.mean(value)
