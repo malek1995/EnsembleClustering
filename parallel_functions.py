@@ -11,6 +11,7 @@ from sklearn.metrics import davies_bouldin_score
 from sklearn.metrics import silhouette_score
 from sklearn.metrics import calinski_harabasz_score
 import time
+import struct
 from concurrent.futures import ProcessPoolExecutor
 
 
@@ -108,6 +109,13 @@ def get_labels_from_models(models):
     return [model.labels_ for model in models]
 
 
+def read_idx(filename):
+    with open(filename, 'rb') as f:
+        zero, data_type, dims = struct.unpack('>HBB', f.read(4))
+        shape = tuple(struct.unpack('>I', f.read(4))[0] for d in range(dims))
+        return np.frombuffer(f.read(), dtype=np.uint8).reshape(shape)
+
+
 class CompareClustering:
     def __init__(self):
         self.df = pd.DataFrame()
@@ -119,6 +127,11 @@ class CompareClustering:
             print(f'{method.upper()} is running')
             ensemble_labels = self.create_ensemble_clustering(k_list, itr_num, base_clustering, method, data)
             self.add_validation_results(data, target, ensemble_labels, method)
+
+    def perform_single_ensemble_clustering(self, base_clustering, k_list, itr_num, data, target, method):
+        print(f'{method.upper()} is running')
+        ensemble_labels = self.create_ensemble_clustering(k_list, itr_num, base_clustering, method.lower(), data)
+        self.add_validation_results(data, target, ensemble_labels, method)
 
     def create_ensemble_clustering(self, k_list, itr_num, base_clustering, algo_name, data):
         ensemble_labels = []
