@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.cluster import SpectralClustering
+from sklearn.cluster import AgglomerativeClustering
 import ClusterEnsembles as CE
 from sklearn.metrics import normalized_mutual_info_score
 from sklearn.metrics import adjusted_rand_score
@@ -33,6 +34,9 @@ def run_ensemble(base_clustering, k, algo_name, k_list, itr_num, data):
     if base_clustering.lower() == 'kmeans':
         k_means_models = create_kmeans_models(k_list, itr_num, data)
         ensemble_input = modify_models_to_valid_ensemble_input(k_means_models)
+    elif base_clustering.lower() == 'agglomerative':
+        agglomerative_models = create_agglomerative_models(k_list, itr_num, data)
+        ensemble_input = modify_models_to_valid_ensemble_input(agglomerative_models)
     else:
         spectral_models = create_spectral_clustering_models(k_list, itr_num, data)
         ensemble_input = modify_models_to_valid_ensemble_input(spectral_models)
@@ -44,9 +48,32 @@ def run_ensemble(base_clustering, k, algo_name, k_list, itr_num, data):
     return time_taken, label
 
 
+def run_ensemble_multi(base_clustering, k, algo_name, k_list, itr_num, data):
+    ensemble_input = []
+    for clustering_method in base_clustering:
+        if clustering_method.lower() == 'kmeans':
+            k_means_models = create_kmeans_models_parallel(k_list, itr_num, data)
+            labels = get_labels_from_models(k_means_models)
+            ensemble_input.extend(labels)
+        elif clustering_method.lower() == 'agglomerative':
+            agglomerative_models = create_agglomerative_models_parallel(k_list, itr_num, data)
+            labels = get_labels_from_models(agglomerative_models)
+            ensemble_input.extend(labels)
+        else:
+            spectral_models = create_spectral_clustering_models(k_list, itr_num, data)
+            labels = get_labels_from_models(spectral_models)
+            ensemble_input.extend(labels)
+
+    start_time = time.time()
+    label = CE.cluster_ensembles(np.array(ensemble_input), nclass=k, solver=algo_name)
+    end_time = time.time()
+    time_taken = end_time - start_time
+    return time_taken, label
+
+
 def create_kmeans_models_parallel(k_list, itr_num, data):
     kmeans_models = []
-    with ProcessPoolExecutor(max_workers=6) as executor:
+    with ProcessPoolExecutor() as executor:
         for k in k_list:
             for i in range(itr_num):
                 future = executor.submit(KMeans, n_clusters=k, init='random', n_init=1).result()
@@ -59,7 +86,7 @@ def create_spectral_clustering_models(k_list, itr_num, data):
     spectral_clustering_models = []
     for k in k_list:
         for i in range(itr_num):
-            model = SpectralClustering(n_clusters=k, assign_labels='discretize')
+            model = SpectralClustering(n_clusters=k)
             model.fit(data)
             spectral_clustering_models.append(model)
     return spectral_clustering_models
@@ -67,13 +94,34 @@ def create_spectral_clustering_models(k_list, itr_num, data):
 
 def create_spectral_models_parallel(k_list, itr_num, data):
     spectral_models = []
-    with ProcessPoolExecutor(max_workers=6) as executor:
+    with ProcessPoolExecutor() as executor:
         for k in k_list:
             for i in range(itr_num):
-                future = executor.submit(SpectralClustering, n_clusters=k, assign_labels='discretize').result()
+                future = executor.submit(SpectralClustering, n_clusters=k).result()
                 model = future.fit(data)
                 spectral_models.append(model)
     return spectral_models
+
+
+def create_agglomerative_models(k_list, itr_num, data):
+    models = []
+    for k in k_list:
+        for i in range(itr_num):
+            model = AgglomerativeClustering(n_clusters=k)
+            model.fit(data)
+            models.append(model)
+    return models
+
+
+def create_agglomerative_models_parallel(k_list, itr_num, data):
+    models = []
+    with ProcessPoolExecutor() as executor:
+        for k in k_list:
+            for i in range(itr_num):
+                future = executor.submit(AgglomerativeClustering, n_clusters=k).result()
+                model = future.fit(data)
+                models.append(model)
+    return models
 
 
 def calculate_internal_validation_for_all_labels(actual_data, predicted_labels):
@@ -133,10 +181,44 @@ class CompareClustering:
         ensemble_labels = self.create_ensemble_clustering(k_list, itr_num, base_clustering, method.lower(), data)
         self.add_validation_results(data, target, ensemble_labels, method)
 
+    def perform_ensemble_multi_clustering(self, base_clustering, k_list, itr_num, data, target, k_ensemble):
+        ensemble_methods = ['nmf', 'mcla', 'hbgf', 'cspa']
+        for method in ensemble_methods:
+            print(f'{method.upper()} is running')
+            ensemble_labels = self.create_ensemble_multi_clustering(k_list, itr_num, base_clustering, method, data,
+                                                                    k_ensemble)
+            self.add_validation_results(data, target, ensemble_labels, method)
+            
+    def perform_single_ensemble_mutli_clustering(self, base_clustering, k_list, itr_num, data, target, k_ensemble, method):
+        print(f'{method.upper()} is running')
+        ensemble_labels = self.create_ensemble_multi_clustering(k_list, itr_num, base_clustering, method.lower(), data, k_ensemble)
+        self.add_validation_results(data, target, ensemble_labels, method)
+        
+    def create_ensemble_multi_clustering(self, k_list, itr_num, base_clustering, method, data, k_ensemble):
+        ensemble_labels = []
+        futures = []
+        with ProcessPoolExecutor() as executor:
+            for k in k_list:
+                for i in range(itr_num):
+                    future = executor.submit(run_ensemble_multi, base_clustering, k_ensemble, method, k_list, itr_num,
+                                             data)
+                    futures.append(future)
+
+        for future in futures:
+            time_taken, label = future.result()
+
+            if method in self.time_dic:
+                self.time_dic[method].append(time_taken)
+            else:
+                self.time_dic[method] = [time_taken]
+            ensemble_labels.append(label)
+
+        return ensemble_labels
+
     def create_ensemble_clustering(self, k_list, itr_num, base_clustering, algo_name, data):
         ensemble_labels = []
         futures = []
-        with ProcessPoolExecutor(max_workers=6) as executor:
+        with ProcessPoolExecutor() as executor:
             for k in k_list:
                 for i in range(itr_num):
                     future = executor.submit(run_ensemble, base_clustering, k, algo_name, k_list, itr_num, data)
@@ -199,3 +281,5 @@ class CompareClustering:
             self.time_dic[key] = np.mean(value)
         dataframe = pd.DataFrame.from_dict(self.time_dic, orient='index', columns=['mean_time'])
         print(dataframe)
+
+
